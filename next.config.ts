@@ -4,14 +4,9 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
-  },
+  // WardAir uses native global CSS; the starter Tailwind loader required a
+  // subprocess port that is unavailable in this build environment.
+
 };
 
 export default nextConfig;

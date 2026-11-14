@@ -1,69 +1,114 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { Activity, ArrowDownToLine, ArrowRight, ArrowUpRight, Check, CheckCircle2, ChevronRight, Clipboard, Clock3, Database, FileText, FlaskConical, History, Leaf, MapPin, Plus, Printer, Search, ShieldCheck, Sparkles, Upload, Wind, X } from 'lucide-react';
+import { analyze, sampleNarrative } from '@/lib/air/analyze';
+import { parseTable } from '@/lib/air/normalize';
+import { SAMPLE_ONE, SAMPLE_TWO, sampleDataset } from '@/lib/air/sample';
+import { DEFAULT_CONTEXT, GUIDANCE, type Context, type Dataset, type Metric, type Snapshot } from '@/lib/air/types';
+import { HISTORY_KEY, readHistory } from '@/lib/air/history';
+
+const fmt = (v: number) => Number(v.toFixed(1)).toLocaleString('en-IN');
+const steps = ['Bring your readings', 'Review the evidence', 'Put a plan in motion'];
+function download(name: string, content: string, type = 'text/plain') { const url = URL.createObjectURL(new Blob([content], { type })); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+  const [context, setContext] = useState<Context>(DEFAULT_CONTEXT);
+  const [text, setText] = useState('');
+  const [label, setLabel] = useState('Pasted readings');
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [brief, setBrief] = useState<Snapshot | null>(null);
+  const [history, setHistory] = useState<Snapshot[]>([]);
+  const [baselineId, setBaselineId] = useState('');
+  const [tab, setTab] = useState<'overview' | 'review' | 'history'>('overview');
+  const [document, setDocument] = useState<'citizen' | 'internal'>('citizen');
+  const [translated, setTranslated] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [stale, setStale] = useState(false);
+  const [evidence, setEvidence] = useState<Metric | null>(null);
+  const [samplePeriod, setSamplePeriod] = useState(1);
+  const [sample, setSample] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const abort = useRef<AbortController | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const baseline = history.find(s => s.id === baselineId) || history.find(s => s.context.locality === context.locality && s.id !== brief?.id);
+  useEffect(() => { const timer = setTimeout(() => { try { const saved = localStorage.getItem(HISTORY_KEY); if (saved) setHistory(readHistory(saved)); } catch { setError('Saved history could not be read. Import a valid export or clear history.'); } }, 0); return () => clearTimeout(timer); }, []);
+  useEffect(() => { if (!cooldown) return; const timer = setTimeout(() => setCooldown(c => c - 1), 1000); return () => clearTimeout(timer); }, [cooldown]);
+  useEffect(() => { if (evidence) dialogRef.current?.showModal(); else dialogRef.current?.close(); }, [evidence]);
+  function persist(items: Snapshot[]) { setHistory(items); try { localStorage.setItem(HISTORY_KEY, JSON.stringify(items)); } catch { setError('Browser storage is full or unavailable. Export history to keep a copy.'); } }
+  function save(snapshot: Snapshot) { persist([snapshot, ...history.filter(h => h.id !== snapshot.id)].slice(0,8)); }
+  function changeContext(patch: Partial<Context>) { setContext(c => ({ ...c, ...patch })); setStale(true); setTranslated(false); }
+  function loadSample(period = 1) {
+    const data = sampleDataset(period); const priorData = sampleDataset(1);
+    const prior: Snapshot = { version: 1, id: 'sample-period-1', created: '2026-11-10T10:00:00+05:30', context, dataset: priorData, metrics: analyze(priorData,context), narrative: sampleNarrative(context,analyze(priorData,context)), mode:'sample', statuses:{}, notes:{} };
+    const metrics = analyze(data, context, period === 2 ? prior : undefined);
+    const snapshot: Snapshot = { ...prior, id: `sample-period-${period}`, created: period === 1 ? prior.created : '2026-11-11T10:00:00+05:30', dataset:data, metrics, baseline: period === 2 ? { context: prior.context, dataset: prior.dataset } : undefined, narrative:sampleNarrative(context,metrics) };
+    setText(period === 1 ? SAMPLE_ONE : SAMPLE_TWO); setLabel(data.label); setDataset(data); setBrief(snapshot); setSample(true); setSamplePeriod(period); setStale(false); setTab('overview'); setError(''); setNotice('Fictional sample loaded. This is a precomputed demonstration, not a live Gemini response.');
+  }
+  function reviewLocally() { try { const data = parseTable(text,label); setDataset(data); setStale(true); setSample(false); setTab('review'); setError(''); } catch (e) { setError(e instanceof Error ? e.message : 'Could not parse table.'); } }
+  async function generate(operation: 'normalize'|'brief') {
+    if (busy || cooldown) return;
+    setBusy(operation); setError(''); setNotice(''); const controller = new AbortController(); abort.current = controller;
+    try {
+      const response = await fetch('/api/generate',{ method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal, body:JSON.stringify({ operation, context, text, label, dataset, baseline: operation === 'brief' ? baseline : undefined }) });
+      const result = await response.json(); if (!response.ok) { if (response.status === 429) setCooldown(60); throw new Error(result.error?.message || 'Generation failed.'); }
+      if (operation === 'normalize') { setDataset(result.dataset); setTab('review'); setStale(true); setSample(false); setNotice('Interpretation ready. Check the original lines and confirm the included observations before generating.'); }
+      else { const snapshot: Snapshot = { version:1, id:crypto.randomUUID(), created:new Date().toISOString(), context:{...context}, dataset:result.dataset, metrics:result.metrics, narrative:result.narrative, baseline:result.baseline, mode:'live', statuses:{}, notes:{} }; setBrief(snapshot); setStale(false); setSample(false); setTab('overview'); save(snapshot); setNotice('Live brief generated and saved in this browser.'); }
+    } catch(e) { setError(controller.signal.aborted ? 'Generation cancelled. Your previous brief is preserved.' : e instanceof Error ? e.message : 'Generation failed.'); }
+    finally { setBusy(''); abort.current = null; }
+  }
+  function updateAction(id: string, value: string, field: 'statuses'|'notes') { if (!brief) return; const updated = { ...brief, [field]:{...brief[field],[id]:value} }; setBrief(updated); if (history.some(h => h.id === brief.id)) persist(history.map(h => h.id === brief.id ? updated : h)); }
+  function updateRow(id: string, patch: Partial<Dataset['observations'][number]>) { if (!dataset) return; setDataset({ ...dataset, observations:dataset.observations.map(o => o.id === id ? {...o,...patch} : o) }); setStale(true); }
+  async function upload(file?: File) { if (!file) return; if (file.size > 102400 || !/\.(csv|tsv|txt)$/i.test(file.name)) { setError('Choose a CSV, TSV or TXT file up to 100 KB.'); return; } setText(await file.text()); setLabel(file.name); setDataset(null); setSample(false); setStale(true); setNotice('File loaded. Review locally or interpret with Gemini.'); }
+  async function importHistory(file?: File) { if (!file) return; try { if(file.size > 3000000) throw new Error('History exceeds 3 MB.'); const items=readHistory(await file.text()); persist([...items,...history.filter(h => !items.some(i => i.id === h.id))].slice(0,8)); setNotice('Validated history imported.'); } catch(e) { setError(e instanceof Error ? e.message : 'Invalid history.'); } }
+  const included = dataset?.observations.filter(o => o.included).length || 0;
+  const excluded = (dataset?.observations.length || 0) - included;
+  const activeText = brief ? document === 'internal' ? brief.narrative.internal : translated ? brief.narrative.translated : brief.narrative.citizen : '';
+  const completed = brief ? Object.values(brief.statuses).filter(s => s === 'Done').length : 0;
+  return <div className="app-shell">
+    <aside className="sidebar no-print">
+      <a className="brand" href="#"><span className="brand-mark"><Wind size={24}/></span>ward<span>air</span><i/></a>
+      <div className="workspace-label">LOCAL IMPACT WORKSPACE</div>
+      <nav aria-label="Workspace">
+        <button className={tab==='overview'?'active':''} onClick={()=>setTab('overview')}><Activity size={18}/> Action desk <span className="nav-dot"/></button>
+        <button className={tab==='review'?'active':''} onClick={()=>setTab('review')}><Database size={18}/> Readings & evidence {dataset&&<small>{dataset.observations.length}</small>}</button>
+        <button className={tab==='history'?'active':''} onClick={()=>setTab('history')}><History size={18}/> Brief history <small>{history.length}</small></button>
+      </nav>
+      <div className="sidebar-note"><span className="eyebrow"><Leaf size={15}/> SMALL ACTIONS. CLEANER AIR.</span><h3>Better evidence.<br/>Better local decisions.</h3><p>Turn the readings you have into the next step you can take.</p><div className="air-lines"><i/><i/><i/><i/></div></div>
+      <div className="local-storage"><ShieldCheck size={16}/><div>Private by design<small>History stays in this browser</small></div></div>
+      <div className="sidebar-footer">WARD AIR <span>EARLY ACCESS · 01</span></div>
+    </aside>
+    <div className="main-shell">
+      <header className="topbar no-print"><div><span className="breadcrumb">Workspace</span><ChevronRight size={14}/><strong>{tab==='history'?'Brief history':tab==='review'?'Readings & evidence':'Action desk'}</strong></div><span className="live-label"><i/> Local insight, practical action</span><span className="avatar">WA</span></header>
+      <main>
+        <section className="page-heading no-print"><div><div className="eyebrow"><span className="tiny-line"/> YOUR NEIGHBOURHOOD, IN FOCUS</div><h1>Good data. <em>Cleaner air.</em></h1><p>A local action brief, grounded in the readings you bring.</p></div><button className="primary sample-button" onClick={()=>loadSample()} disabled={!!busy}><FlaskConical size={17}/> Load Sample Data <ArrowUpRight size={16}/></button></section>
+        <div className="workflow no-print">{steps.map((s,i)=><div key={s} className={(dataset?brief?2:1:0)>=i?'reached':''}><span>{(dataset?brief?2:1:0)>i?<Check size={13}/>:String(i+1).padStart(2,'0')}</span>{s}{i<2&&<div className="step-line"/>}</div>)}</div>
+        <div aria-live="polite" className="messages no-print">{error&&<div className="message error"><span>{error}</span><button aria-label="Dismiss error" onClick={()=>setError('')}><X size={16}/></button></div>}{notice&&<div className="message"><span>{notice}</span><button aria-label="Dismiss message" onClick={()=>setNotice('')}><X size={16}/></button></div>}{stale&&brief&&<div className="message warning">Inputs have changed. The displayed brief uses its saved context; regenerate after reviewing your changes.</div>}</div>
+        {tab==='history'?<section className="panel history-panel"><div className="section-heading"><div><span className="eyebrow">YOUR LOCAL RECORD</span><h2>Brief history</h2></div><div className="button-row"><button onClick={()=>download('wardair-history.json',JSON.stringify(history),'application/json')}><ArrowDownToLine size={15}/> Export</button><button onClick={()=>importRef.current?.click()}><Upload size={15}/> Import</button><button onClick={()=>{persist([]);setBaselineId('');setNotice('Browser history cleared.');}}>Clear history</button><input hidden ref={importRef} type="file" accept=".json" onChange={e=>importHistory(e.target.files?.[0])}/></div></div><p className="muted">Up to eight successful briefs, stored in this browser. Export to move them to another device.</p>{history.length?history.map(h=><article className="history-item" key={h.id}><span className="history-icon"><FileText size={21}/></span><div><h3>{h.context.locality}</h3><p>{h.context.role} · {new Date(h.created).toLocaleString()} · {h.mode==='sample'?'Fictional sample':'Gemini brief'}</p></div><button disabled={!!busy} onClick={()=>{setBrief(h);setDataset(h.dataset);setContext(h.context);setStale(false);setSample(h.mode==='sample');setTab('overview');}}>Open brief <ArrowRight size={14}/></button><button onClick={()=>{setBaselineId(h.id);setNotice('Baseline selected for your next live brief.');}}>Use as baseline</button></article>):<div className="empty-history"><History size={34}/><h3>Your next steps become a record.</h3><p>Save a sample brief or generate a live brief to start your local history.</p></div>}</section>:<>
+        <section className="intake-grid no-print">
+          <div className="panel context-panel"><div className="section-heading"><h2><span className="section-number">01</span> Set the local lens</h2><MapPin size={17}/></div><label>WARD / LOCALITY<input value={context.locality} disabled={!!busy} maxLength={120} onChange={e=>changeContext({locality:e.target.value})}/></label><div className="two-fields"><label>PREPARING THIS FOR<select value={context.role} disabled={!!busy} onChange={e=>changeContext({role:e.target.value as Context['role']})}><option>Ward officer</option><option>Housing society</option><option>School</option></select></label><label>ADVISORY LANGUAGE<select value={context.language} disabled={!!busy} onChange={e=>changeContext({language:e.target.value as Context['language']})}><option>Hindi</option><option>Marathi</option><option>English</option></select></label></div><div className="two-fields"><label>READING LEVEL<select value={context.level} disabled={!!busy} onChange={e=>changeContext({level:e.target.value as Context['level']})}><option>Simple</option><option>Standard</option></select></label><label>REPORTING TIMEZONE<input disabled={!!busy} value={context.timezone} onChange={e=>changeContext({timezone:e.target.value})}/></label></div><div className="context-foot"><ShieldCheck size={14}/> Recommendations stay within your team’s remit.</div></div>
+          <div className="panel readings-panel"><div className="section-heading"><h2><span className="section-number">02</span> Bring your readings</h2><button className="text-button" onClick={()=>fileRef.current?.click()} disabled={!!busy}><Upload size={14}/> Upload file</button></div><input hidden ref={fileRef} type="file" accept=".csv,.tsv,.txt" onChange={e=>upload(e.target.files?.[0])}/><textarea aria-label="Air quality table" disabled={!!busy} value={text} onChange={e=>{setText(e.target.value);setDataset(null);setSample(false);setStale(true);}} placeholder={'Paste your CSV or spreadsheet rows here…\nsite, pollutant, value, unit, timestamp, period'} spellCheck={false}/><div className="input-meta"><span>CSV, TSV, TXT · max 100 KB / 500 rows</span>{text&&<span>{label}</span>}</div><div className="intake-actions"><button onClick={reviewLocally} disabled={!text||!!busy}><Search size={15}/> Review locally</button><button className="dark-button" onClick={()=>generate('normalize')} disabled={!text||!!busy||!!cooldown}><Sparkles size={15}/> {busy==='normalize'?'Interpreting…':'Analyze with Gemini'}<ArrowRight size={14}/></button></div><p className="privacy-note">Gemini analysis sends your table to Google. Use environmental readings without personal identifiers. <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Data terms ↗</a></p></div>
+        </section>
+        {busy&&<section className="panel generation-loading" role="status"><div className="section-heading"><h2><Sparkles size={18}/> {busy==='normalize'?'Interpreting source rows…':'Building your evidence-backed brief…'}</h2><button onClick={()=>abort.current?.abort()}>Cancel</button></div><div className="skeleton long"/><div className="skeleton"/><div className="skeleton-grid"><div className="skeleton tall"/><div className="skeleton tall"/><div className="skeleton tall"/></div></section>}
+        {tab==='review'&&<section className="panel review-panel no-print"><div className="section-heading"><div><span className="eyebrow">CHECK BEFORE YOU CONCLUDE</span><h2>Review the interpretation</h2></div><span className="badge">{included} included · {excluded} excluded</span></div>{dataset?<><p className="muted">Edit incorrect fields or exclude unresolved rows. Check timestamps, units and averaging periods. Inclusion is revalidated on the server.</p>{dataset.notes.map(n=><p className="review-note" key={n}>{n}</p>)}<fieldset disabled={!!busy} className="review-fieldset"><div className="table-scroll"><table><thead><tr><th>Use</th><th>Source / location</th><th>PM</th><th>Value</th><th>Unit</th><th>Timestamp</th><th>Period</th><th>Review notes</th></tr></thead><tbody>{dataset.observations.map(o=><tr key={o.id}><td><input aria-label={`Include line ${o.line}`} type="checkbox" checked={o.included} onChange={e=>updateRow(o.id,{included:e.target.checked})}/></td><td><input aria-label={`Site line ${o.line}`} value={o.site} onChange={e=>updateRow(o.id,{site:e.target.value})}/><details><summary>Original line {o.line}</summary><code>{o.source}</code></details></td><td><input className="compact" aria-label={`Pollutant line ${o.line}`} value={o.pollutant} onChange={e=>updateRow(o.id,{pollutant:e.target.value})}/></td><td><input className="compact" aria-label={`Value line ${o.line}`} type="number" value={o.value??''} onChange={e=>updateRow(o.id,{value:e.target.value===''?null:Number(e.target.value)})}/></td><td><input className="compact" aria-label={`Unit line ${o.line}`} value={o.unit} onChange={e=>updateRow(o.id,{unit:e.target.value})}/></td><td><input aria-label={`Timestamp line ${o.line}`} value={o.timestamp} onChange={e=>updateRow(o.id,{timestamp:e.target.value})}/></td><td><input className="compact" aria-label={`Period line ${o.line}`} value={o.period} onChange={e=>updateRow(o.id,{period:e.target.value})}/></td><td><span className={o.flags.some(f=>!f.startsWith('Converted'))?'issue':'muted'}>{o.flags.join(' · ')||'Ready for review'}</span><input aria-label={`Decision note line ${o.line}`} value={o.reason} placeholder="Decision note" onChange={e=>updateRow(o.id,{reason:e.target.value})}/></td></tr>)}</tbody></table></div></fieldset><div className="review-footer"><span><CheckCircle2 size={16}/> {included} observations selected · expected coverage unknown</span><button className="primary" disabled={!included||!!busy||!!cooldown} onClick={()=>generate('brief')}><Sparkles size={16}/> Confirm & generate brief</button></div></>:<div className="empty-history"><Database size={32}/><h3>Start with a table.</h3><p>Paste readings above, upload a file, or load the fictional sample.</p></div>}</section>}
+        {tab==='overview'&&(!brief?<section className="welcome panel"><div className="welcome-graphic"><Wind size={56}/><span><Leaf size={23}/></span></div><span className="eyebrow">FROM OBSERVATION TO ACTION</span><h2>Your neighbourhood has a story.<br/>Let the readings guide your next step.</h2><p>Bring local particulate readings. Review the evidence.<br/>Build an actionable brief for the people who can make a difference.</p><button className="primary" onClick={()=>loadSample()}><FlaskConical size={16}/> Explore with sample data <ArrowRight size={16}/></button><div className="welcome-features"><span><CheckCircle2 size={15}/> Source-linked findings</span><span><CheckCircle2 size={15}/> Role-specific actions</span><span><CheckCircle2 size={15}/> Bilingual advisories</span></div></section>:<>
+          <section className="brief-heading"><div><div className="eyebrow"><span className="tiny-line"/> YOUR LOCAL ACTION BRIEF</div><h2>{brief.context.locality}</h2><div className="brief-meta"><span><Clock3 size={13}/>{new Date(brief.created).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</span><span>{brief.context.role}</span><span>{brief.context.timezone}</span><span className={'badge '+(brief.mode==='sample'?'amber':'')}>{brief.mode==='sample'?'FICTIONAL SAMPLE · PRECOMPUTED':'LIVE GEMINI BRIEF'}</span></div></div><div className="button-row no-print">{sample&&<button onClick={()=>loadSample(samplePeriod===1?2:1)} disabled={!!busy}>Load period {samplePeriod===1?'2':'1'} <ArrowRight size={14}/></button>}<button onClick={()=>{save(brief);setNotice('Brief saved in this browser.');}}><Plus size={14}/> Save brief</button><button className="dark-button" disabled={!dataset||!!busy||!!cooldown} onClick={()=>generate('brief')}><Sparkles size={14}/> Regenerate</button></div></section>
+          <div className="summary-strip"><span className="summary-icon"><Leaf size={22}/></span><div><span className="eyebrow">THE NEXT BEST STEP</span><p>{brief.narrative.summary}</p></div><span className="summary-tag">OBSERVE → VERIFY → ACT</span></div>
+          <section className="stats-grid"><div className="stat-card"><span>USABLE OBSERVATIONS</span><div>{brief.dataset.observations.filter(o=>o.included).length}<Database size={20}/></div><small>{brief.dataset.observations.filter(o=>!o.included).length} excluded · inspect quality notes</small></div><div className="stat-card"><span>LOCATIONS OBSERVED</span><div>{new Set(brief.metrics.map(m=>m.site)).size}<MapPin size={20}/></div><small>Among supplied locations only</small></div><div className="stat-card"><span>SAMPLING COVERAGE</span><div className="text-stat">Unknown<Activity size={20}/></div><small>No expected cadence supplied</small></div><div className="stat-card"><span>ACTIONS COMPLETED</span><div>{completed}<span className="stat-denominator">/ {brief.narrative.actions.length}</span><CheckCircle2 size={20}/></div><small>Track progress, then verify the result</small></div></section>
+          <div className="results-grid"><section className="panel findings-panel"><div className="section-heading"><div><span className="eyebrow">WHAT THE READINGS SAY</span><h2>Observed locations</h2></div><span className="badge">PM MASS CONCENTRATION</span></div><p className="muted small">Observation means · µg/m³ · grouped by pollutant & averaging period</p><div className="location-list">{brief.metrics.map((m,i)=><button className="location-row" key={m.id} onClick={()=>setEvidence(m)}><span className="location-rank">{String(i+1).padStart(2,'0')}</span><div className="location-data"><div className="location-title"><strong>{m.site}</strong><span>{fmt(m.mean)} <small>µg/m³</small></span></div><div className="bar-track"><span style={{width:`${Math.max(4,m.mean/Math.max(...brief.metrics.filter(x=>x.pollutant===m.pollutant&&x.period===m.period).map(x=>x.mean))*100)}%`}}/></div><div className="location-caption"><span>{m.pollutant} · {m.period} · n={m.count}</span><span>{m.delta===null?'View evidence':`${m.delta>0?'+':''}${fmt(m.delta)} vs prior`} <ArrowUpRight size={12}/></span></div></div></button>)}</div><div className="evidence-caveat"><ShieldCheck size={16}/><span>Relative observations, not an official AQI. Readings alone cannot establish a pollution source.</span></div>{brief.narrative.findings.map(f=><div className="finding" key={f.title}><h3>{f.title}</h3><p>{f.detail}</p><small>{f.limitation}</small><div className="evidence-links">{f.evidence.map(id=><button key={id} onClick={()=>setEvidence(brief.metrics.find(m=>m.id===id)||null)}><Search size={12}/>{id}</button>)}</div></div>)}</section>
+          <section className="panel actions-panel"><div className="section-heading"><div><span className="eyebrow">WHAT YOUR TEAM CAN DO</span><h2>A focused action plan</h2></div><span className="round-icon"><ArrowUpRight size={19}/></span></div>{brief.narrative.actions.map((a,i)=><article className="action-card" key={a.id}><div className="action-top"><span className="priority">PRIORITY {String(i+1).padStart(2,'0')}</span><span><Clock3 size={12}/>{a.horizon}</span></div><h3>{a.title}</h3><p>{a.rationale}</p><div className="owner"><span className="owner-avatar">{a.owner.split(' ').map(w=>w[0]).slice(0,2).join('')}</span>{a.owner}</div><details><summary>What to verify next <ChevronRight size={13}/></summary><p>{a.verification}</p></details><div className="action-bottom"><select aria-label={`Status for ${a.title}`} value={brief.statuses[a.id]||'To do'} onChange={e=>updateAction(a.id,e.target.value,'statuses')}><option>To do</option><option>In progress</option><option>Done</option></select>{a.evidence.length?a.evidence.map(id=><button key={id} className="text-button" onClick={()=>setEvidence(brief.metrics.find(m=>m.id===id)||null)}>View evidence <ArrowUpRight size={13}/></button>):<a href={GUIDANCE.url} target="_blank" rel="noreferrer" className="guidance-link">Guidance & verification ↗</a>}</div><textarea aria-label={`Verification notes for ${a.title}`} value={brief.notes[a.id]||''} maxLength={1000} placeholder="Add a local verification note…" onChange={e=>updateAction(a.id,e.target.value,'notes')}/></article>)}</section></div>
+          <section className="panel comparison-panel"><div className="section-heading"><div><span className="eyebrow">KEEP THE CONTEXT WITH THE CHANGE</span><h2>Since the previous brief</h2></div><History size={19}/></div><div className="comparison-grid">{brief.metrics.map(m=><div key={m.id}><strong>{m.site}</strong><div className={'delta '+(m.delta!==null?'has-delta':'')}>{m.delta===null?'Not comparable':`${m.delta>0?'+':''}${fmt(m.delta)} µg/m³`}</div><p>{m.comparison}</p></div>)}</div>{brief.baseline&&<p className="small muted">Lost locations: {brief.baseline.dataset.observations.filter(o=>o.included).map(o=>o.site).filter((site,i,all)=>all.indexOf(site)===i&&!brief.metrics.some(m=>m.site===site)).join(', ')||'None'}. New locations: {brief.metrics.map(m=>m.site).filter((site,i,all)=>all.indexOf(site)===i&&!brief.baseline!.dataset.observations.some(o=>o.included&&o.site===site)).join(', ')||'None'}.</p>}<p className="small muted">Changed coverage may hide a shift. A completed action and improved readings do not establish causation.</p>{baseline&&<p className="small muted">Next live baseline: {baseline.context.locality} · {new Date(baseline.created).toLocaleDateString()}</p>}</section>
+          <section className="panel communication-panel"><div className="section-heading no-print"><div><span className="eyebrow">MAKE THE EVIDENCE USEFUL</span><h2>Ready to communicate</h2></div><div className="button-row"><button onClick={async()=>{try{await navigator.clipboard.writeText(activeText);setNotice('Document copied.');}catch{setError('Clipboard unavailable. Download the text instead.');}}}><Clipboard size={14}/> Copy</button><button onClick={()=>download(`wardair-${document}.txt`,`${brief.context.locality}\n${activeText}\n\nEvidence:\n${brief.metrics.map(m=>`${m.id}: ${m.site}, ${m.pollutant}, ${fmt(m.mean)} µg/m³, ${m.period}, n=${m.count}`).join('\n')}\n\nGuidance: ${GUIDANCE.url}`)}><ArrowDownToLine size={14}/> Download</button><button onClick={()=>window.print()}><Printer size={14}/> Print</button></div></div><div className="document-toolbar no-print"><div className="segmented"><button className={document==='citizen'?'selected':''} onClick={()=>setDocument('citizen')}>Citizen advisory</button><button className={document==='internal'?'selected':''} onClick={()=>setDocument('internal')}>Internal note</button></div>{document==='citizen'&&<div className="segmented"><button className={!translated?'selected':''} onClick={()=>setTranslated(false)}>English</button>{brief.context.language!=='English'&&<button className={translated?'selected':''} onClick={()=>setTranslated(true)}>{brief.context.language==='Hindi'?'हिन्दी':'मराठी'}</button>}</div>}</div><article className="document-paper"><span className="eyebrow">{document==='citizen'?'COMMUNITY ADVISORY':'INTERNAL OPERATIONAL NOTE'} · {brief.context.level.toUpperCase()}</span><h3>A little awareness.<br/>A healthier neighbourhood.</h3><p lang={translated?brief.context.language==='Hindi'?'hi':'mr':'en'}>{activeText}</p><div className="document-source"><ShieldCheck size={15}/><span>General precautions informed by <a href={GUIDANCE.url} target="_blank" rel="noreferrer">WHO guidance ↗</a>. Local observations: {brief.metrics.map(m=>m.id).join(', ')}. {brief.mode==='sample'&&'Sample translations require fluent human review.'}</span></div></article><div className="document-footer"><span><CheckCircle2 size={14}/> Review locally before sharing</span><span>Publication is a human decision.</span></div></section>
+        </>)}
+        </>}
+        <footer className="page-footer"><span className="footer-brand"><Wind size={16}/> wardair</span><span>Local evidence. Thoughtful action. A little more breathing room.</span><span>BUILT FOR YOUR NEIGHBOURHOOD</span></footer>
       </main>
     </div>
-  );
+    <dialog ref={dialogRef} onCancel={()=>setEvidence(null)} onClick={e=>{if(e.target===e.currentTarget)setEvidence(null);}} className="evidence-dialog"><div className="section-heading"><div><span className="eyebrow">FOLLOW THE EVIDENCE</span><h2>{evidence?.site}</h2></div><button aria-label="Close evidence" onClick={()=>setEvidence(null)}><X size={19}/></button></div>{evidence&&brief&&<><div className="evidence-value">{fmt(evidence.mean)} <span>µg/m³</span></div><p>{evidence.pollutant} · {evidence.period} observation mean · {evidence.count} included samples</p><div className="calculation"><strong>{evidence.id} · mean-v1</strong><p>Sum of included values ÷ sample count. Range: {fmt(evidence.min)}–{fmt(evidence.max)} µg/m³. No expected sampling cadence supplied. This is not a regulatory daily average.</p></div><h3>Original source → normalized reading</h3>{brief.dataset.observations.filter(o=>evidence.observationIds.includes(o.id)).map(o=><div className="source-row" key={o.id}><span className="eyebrow">{o.id} · ORIGINAL LINE {o.line}</span><pre>{o.source}</pre><strong>{o.value===null?'Missing':fmt(o.value)} {o.unit}</strong><p>{o.timestamp} · {o.flags.join(' · ')||'No conversion required'}</p></div>)}<details><summary>Excluded observations ({brief.dataset.observations.filter(o=>!o.included).length})</summary>{brief.dataset.observations.filter(o=>!o.included).map(o=><div className="source-row" key={o.id}><pre>{o.source}</pre><p>{o.reason||o.flags.join(' · ')||'Excluded during review'}</p></div>)}</details><p className="muted">Source: {brief.dataset.label}. Source text is supplied by the user; provenance is not independently verified.</p></>}</dialog>
+    {cooldown>0&&<div className="cooldown" role="status">Quota cooldown · retry in {cooldown}s</div>}
+  </div>;
 }

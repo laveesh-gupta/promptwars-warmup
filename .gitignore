@@ -42,3 +42,7 @@ next-env.d.ts
 
 # Local tooling
 /.serena/
+
+# Safe setup template and local tooling
+!.env.example
+/.serena/

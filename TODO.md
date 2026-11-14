@@ -1,6 +1,16 @@
 # WardAir — civic air-quality action desk
 
-Status: planning only. App implementation has not started; wait for the user's go-ahead.
+Status: implementation in progress, authorized by the user. Core single-page workflow and server endpoint are implemented. Lint, TypeScript, automated tests and production-build checks are being finalized. No GitHub push or Vercel deployment has been performed.
+
+## Implementation update — 14 November 2026
+
+Implemented: local/AI intake, editable row review, deterministic PM unit conversion, exclusions and duplicates, source-linked observation metrics, paired sample periods, role-specific actions, status/notes, bilingual document views, copy/download/print styles, bounded local history and validated export/import, request limits and safe API errors. `npm test` covers analysis and mocked endpoint failures. See README for supported input and explicit limits.
+
+Release checks remaining: live two-operation Gemini smoke test, browser/keyboard/narrow-screen/print review (browser preview host unavailable in this session), fluent sample-translation review, Vercel environment/plan and distributed abuse-protection configuration, then deployment and live smoke test. Model availability must be tested with generation, not only model listing.
+
+Verified compatibility change: removed the starter Tailwind Turbopack CSS loader after repeated CSS-worker port-binding failures. This implementation uses native global CSS; Cache Components and partial prefetching are preserved.
+
+The original checklist below remains the design/acceptance reference; unchecked items are not claims that implementation is absent.
 
 ## Purpose and concrete societal use
 
@@ -131,7 +141,7 @@ Internal notes include situation, evidence, uncertainty, changes, owners, and ne
 - Use private/no-store responses for user briefs. Log request ID, operation, duration and safe error code, not uploaded tables or personal information.
 - Before upload, explain that table data is sent to Google's Gemini service. Request environmental readings without personal identifiers; free-tier data handling must be checked against current terms.
 
-## Implementation TODO — only after go-ahead
+## Original implementation and release acceptance checklist
 
 ### 1. Contracts, fixtures, and trust rules
 

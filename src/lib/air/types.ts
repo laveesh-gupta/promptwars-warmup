@@ -1,0 +1,9 @@
+export type Context = { locality: string; timezone: string; role: 'Ward officer' | 'Housing society' | 'School'; language: 'English' | 'Hindi' | 'Marathi'; level: 'Simple' | 'Standard' };
+export type Observation = { id: string; line: number; source: string; site: string; pollutant: string; value: number | null; unit: string; timestamp: string; period: string; flags: string[]; included: boolean; reason: string };
+export type Dataset = { label: string; observations: Observation[]; notes: string[] };
+export type Metric = { id: string; site: string; pollutant: string; period: string; mean: number; min: number; max: number; count: number; observationIds: string[]; delta: number | null; comparison: string };
+export type Action = { id: string; title: string; owner: string; rationale: string; verification: string; horizon: string; evidence: string[] };
+export type Narrative = { summary: string; findings: { title: string; detail: string; limitation: string; evidence: string[] }[]; actions: Action[]; internal: string; citizen: string; translated: string };
+export type Snapshot = { version: 1; id: string; created: string; context: Context; dataset: Dataset; metrics: Metric[]; narrative: Narrative; mode: 'sample' | 'live'; baseline?: { context: Context; dataset: Dataset }; statuses: Record<string, string>; notes: Record<string, string> };
+export const DEFAULT_CONTEXT: Context = { locality: 'Anand Nagar · Ward 12', timezone: 'Asia/Kolkata', role: 'Ward officer', language: 'Hindi', level: 'Simple' };
+export const GUIDANCE = { title: 'WHO · Personal interventions and risk communication (2024)', url: 'https://www.who.int/news-room/questions-and-answers/item/air-pollution-personal-interventions-and-risk-communication', reviewed: '2026-11-14', advice: 'Consider less polluted times and places for outdoor activity. Children, older adults and people with heart or lung conditions may need additional exposure precautions. Follow local public-health advice.' };
